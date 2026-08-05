@@ -197,12 +197,23 @@ function Start-Watch
     }
 }
 
+function Resolve-PowerShellPath
+{
+    $alias = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe'
+    if (Test-Path -LiteralPath $alias)
+    {
+        return $alias
+    }
+
+    return (Get-Process -Id $PID).Path
+}
+
 function Install-AutoStart
 {
     $shortcutPath = Join-Path ([Environment]::GetFolderPath('Startup')) $SHORTCUT_NAME
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($shortcutPath)
-    $shortcut.TargetPath = (Get-Process -Id $PID).Path
+    $shortcut.TargetPath = Resolve-PowerShellPath
     $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Hidden"
     $shortcut.WorkingDirectory = $PSScriptRoot
     $shortcut.WindowStyle = 7
