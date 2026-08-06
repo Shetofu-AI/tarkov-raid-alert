@@ -18,6 +18,7 @@ $POLL_INTERVAL_MS = 500
 $RESCAN_INTERVAL_MS = 3000
 $READ_BUFFER_SIZE = 65536
 $RAID_STARTED_MARKER = '|application|GameStarted:'
+$GAME_PROCESS_NAME = 'EscapeFromTarkov'
 
 $script:PLAYER = $null
 
@@ -29,21 +30,56 @@ function Write-Log
     Write-Host "[$stamp] $Message"
 }
 
-function Hide-ConsoleWindow
+function Initialize-NativeInterop
 {
-    if (-not ('Native.WindowState' -as [type]))
+    if ('Native.WindowState' -as [type])
     {
-        Add-Type -Namespace 'Native' -Name 'WindowState' -MemberDefinition @'
+        return
+    }
+
+    Add-Type -Namespace 'Native' -Name 'WindowState' -MemberDefinition @'
 [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
 [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
 '@
-    }
+}
+
+function Hide-ConsoleWindow
+{
+    Initialize-NativeInterop
 
     $window = [Native.WindowState]::GetConsoleWindow()
     if ($window -ne [IntPtr]::Zero)
     {
         [Native.WindowState]::ShowWindow($window, 0) | Out-Null
     }
+}
+
+function Test-GameFocused
+{
+    Initialize-NativeInterop
+
+    $window = [Native.WindowState]::GetForegroundWindow()
+    if ($window -eq [IntPtr]::Zero)
+    {
+        return $false
+    }
+
+    $processId = [uint32] 0
+    [Native.WindowState]::GetWindowThreadProcessId($window, [ref] $processId) | Out-Null
+    if ($processId -eq 0)
+    {
+        return $false
+    }
+
+    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+    if ($null -eq $process)
+    {
+        return $false
+    }
+
+    return $process.ProcessName -eq $GAME_PROCESS_NAME
 }
 
 function Resolve-LogsRoot
@@ -115,6 +151,12 @@ function Get-LatestLogFile
 
 function Invoke-Alert
 {
+    if (Test-GameFocused)
+    {
+        Write-Log 'Рейд начался — игра в фокусе, звук пропущен'
+        return
+    }
+
     Write-Log 'Рейд начался'
     $script:PLAYER.Play()
 }
