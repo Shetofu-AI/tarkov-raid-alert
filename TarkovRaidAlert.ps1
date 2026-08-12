@@ -14,20 +14,35 @@ $ErrorActionPreference = 'Stop'
 
 $SHORTCUT_NAME = 'TarkovRaidAlert.lnk'
 $MUTEX_NAME = 'Local\TarkovRaidAlert'
+$LOG_FILE = Join-Path $env:LOCALAPPDATA 'TarkovRaidAlert\watch.log'
 $POLL_INTERVAL_MS = 500
 $RESCAN_INTERVAL_MS = 3000
 $READ_BUFFER_SIZE = 65536
-$RAID_STARTED_MARKER = '|application|GameStarted:'
+$RAID_MARKERS = @(
+    '|application|MatchingCompleted:'
+    '|application|GameStarted:'
+)
+$ALERT_COOLDOWN_SECONDS = 120
 $GAME_PROCESS_NAME = 'EscapeFromTarkov'
 
 $script:PLAYER = $null
+$script:LAST_ALERT = [datetime]::MinValue
 
 function Write-Log
 {
     param([string] $Message)
 
-    $stamp = (Get-Date).ToString('HH:mm:ss')
-    Write-Host "[$stamp] $Message"
+    $stamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+    $line = "[$stamp] $Message"
+    Write-Host $line
+
+    $folder = Split-Path -Parent $LOG_FILE
+    if (-not (Test-Path -LiteralPath $folder))
+    {
+        New-Item -ItemType Directory -Path $folder -Force | Out-Null
+    }
+
+    Add-Content -LiteralPath $LOG_FILE -Value $line -Encoding utf8
 }
 
 function Initialize-NativeInterop
@@ -56,30 +71,30 @@ function Hide-ConsoleWindow
     }
 }
 
-function Test-GameFocused
+function Get-ForegroundProcessName
 {
     Initialize-NativeInterop
 
     $window = [Native.WindowState]::GetForegroundWindow()
     if ($window -eq [IntPtr]::Zero)
     {
-        return $false
+        return '<нет окна>'
     }
 
     $processId = [uint32] 0
     [Native.WindowState]::GetWindowThreadProcessId($window, [ref] $processId) | Out-Null
     if ($processId -eq 0)
     {
-        return $false
+        return '<нет процесса>'
     }
 
     $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
     if ($null -eq $process)
     {
-        return $false
+        return "<pid $processId>"
     }
 
-    return $process.ProcessName -eq $GAME_PROCESS_NAME
+    return $process.ProcessName
 }
 
 function Resolve-LogsRoot
@@ -151,13 +166,23 @@ function Get-LatestLogFile
 
 function Invoke-Alert
 {
-    if (Test-GameFocused)
+    param([string] $Marker)
+
+    if (((Get-Date) - $script:LAST_ALERT).TotalSeconds -lt $ALERT_COOLDOWN_SECONDS)
     {
-        Write-Log 'Рейд начался — игра в фокусе, звук пропущен'
+        Write-Log "$Marker — в пределах кулдауна, звук пропущен"
+        return
+    }
+    $script:LAST_ALERT = Get-Date
+
+    $foreground = Get-ForegroundProcessName
+    if ($foreground -eq $GAME_PROCESS_NAME)
+    {
+        Write-Log "$Marker — игра в фокусе, звук пропущен"
         return
     }
 
-    Write-Log 'Рейд начался'
+    Write-Log "$Marker — играю звук (в фокусе: $foreground)"
     $script:PLAYER.Play()
 }
 
@@ -227,9 +252,15 @@ function Start-Watch
 
                 foreach ($line in $completed -split "`r?`n")
                 {
-                    if ($line.Contains($RAID_STARTED_MARKER))
+                    foreach ($marker in $RAID_MARKERS)
                     {
-                        Invoke-Alert
+                        if (-not $line.Contains($marker))
+                        {
+                            continue
+                        }
+
+                        Invoke-Alert -Marker $marker.Split('|')[-1].TrimEnd(':')
+                        break
                     }
                 }
             }
@@ -303,7 +334,7 @@ $script:PLAYER.Load()
 
 if ($Test)
 {
-    Invoke-Alert
+    Invoke-Alert -Marker 'Проверка'
     Start-Sleep -Seconds 3
     return
 }
