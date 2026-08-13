@@ -19,7 +19,7 @@ $POLL_INTERVAL_MS = 500
 $RESCAN_INTERVAL_MS = 3000
 $READ_BUFFER_SIZE = 65536
 $RAID_MARKERS = @(
-    '|application|MatchingCompleted:'
+    '|application|GameStarting:'
     '|application|GameStarted:'
 )
 $ALERT_COOLDOWN_SECONDS = 120
